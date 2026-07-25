@@ -99,7 +99,7 @@ const productSchema = new Schema<IProduct>(
      createdBy: {
       type: Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
     },
 
     lastUpdatedBy: {
