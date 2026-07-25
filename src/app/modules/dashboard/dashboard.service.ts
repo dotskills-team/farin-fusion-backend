@@ -40,6 +40,9 @@ const getDashboardOverview = async (
     ...queryObj,
   };
 
+  let staffPerformance = undefined;
+let myPerformance = undefined;
+
   const productCostAgg = await Order.aggregate([
     {
       $match: {
@@ -319,6 +322,223 @@ const orderStats = {
     ]);
   }
 
+  if ([Role.ADMIN, Role.MANAGER].includes(role as Role)) {
+  staffPerformance = await Order.aggregate([
+    {
+      $match: {
+        isDeleted: false,
+        isPublished: true,
+        ...queryObj,
+      },
+    },
+
+    {
+      $lookup: {
+        from: "users",
+        localField: "seller",
+        foreignField: "_id",
+        as: "seller",
+      },
+    },
+
+    {
+      $unwind: {
+        path: "$seller",
+        preserveNullAndEmptyArrays: false,
+      },
+    },
+
+    {
+      $group: {
+        _id: "$seller._id",
+
+        sellerName: {
+          $first: "$seller.name",
+        },
+
+        email: {
+          $first: "$seller.email",
+        },
+
+        phone: {
+          $first: "$seller.phone",
+        },
+
+        role: {
+          $first: "$seller.role",
+        },
+
+        profileImage: {
+          $first: "$seller.profileImage",
+        },
+
+        commissionPerOrder: {
+          $first: "$seller.commissionSalary",
+        },
+
+        totalOrders: {
+          $sum: 1,
+        },
+
+        pendingOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "PENDING"] }, 1, 0],
+          },
+        },
+
+        confirmedOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "CONFIRMED"] }, 1, 0],
+          },
+        },
+
+        completedOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "COMPLETED"] }, 1, 0],
+          },
+        },
+
+        cancelledOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "CANCELLED"] }, 1, 0],
+          },
+        },
+
+        partialOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "PARTIAL"] }, 1, 0],
+          },
+        },
+
+        revenue: {
+          $sum: {
+            $cond: [
+              {
+                $in: ["$orderStatus", ["COMPLETED", "PARTIAL"]],
+              },
+              {
+                $subtract: [
+                  "$total",
+                  {
+                    $ifNull: ["$shippingCost", 0],
+                  },
+                ],
+              },
+              0,
+            ],
+          },
+        },
+
+        totalCommission: {
+          $sum: {
+            $cond: [
+              {
+                $in: ["$orderStatus", ["COMPLETED", "PARTIAL"]],
+              },
+              "$seller.commissionSalary",
+              0,
+            ],
+          },
+        },
+      },
+    },
+
+    {
+      $sort: {
+        totalOrders: -1,
+      },
+    },
+  ]);
+}
+
+if (
+  [
+    Role.MODERATOR,
+    Role.GENERALSTAFF,
+    Role.TELLICELSS,
+  ].includes(role as Role)
+) {
+  const result = await Order.aggregate([
+    {
+      $match: {
+        seller: new Types.ObjectId(userId),
+        isDeleted: false,
+        isPublished: true,
+        ...queryObj,
+      },
+    },
+
+    {
+      $group: {
+        _id: null,
+
+        totalOrders: {
+          $sum: 1,
+        },
+
+        pendingOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "PENDING"] }, 1, 0],
+          },
+        },
+
+        confirmedOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "CONFIRMED"] }, 1, 0],
+          },
+        },
+
+        completedOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "COMPLETED"] }, 1, 0],
+          },
+        },
+
+        cancelledOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "CANCELLED"] }, 1, 0],
+          },
+        },
+
+        partialOrders: {
+          $sum: {
+            $cond: [{ $eq: ["$orderStatus", "PARTIAL"] }, 1, 0],
+          },
+        },
+
+        revenue: {
+          $sum: {
+            $cond: [
+              {
+                $in: ["$orderStatus", ["COMPLETED", "PARTIAL"]],
+              },
+              {
+                $subtract: [
+                  "$total",
+                  {
+                    $ifNull: ["$shippingCost", 0],
+                  },
+                ],
+              },
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  myPerformance = result[0] || {
+    totalOrders: 0,
+    pendingOrders: 0,
+    confirmedOrders: 0,
+    completedOrders: 0,
+    cancelledOrders: 0,
+    partialOrders: 0,
+    revenue: 0,
+  };
+}
+
   topProducts = await Order.aggregate([
     {
       $match: {
@@ -465,6 +685,9 @@ const orderStats = {
     totalProducts,
     orderStats,
     staffEarnings,
+
+  staffPerformance, 
+  myPerformance,   
     mySalary,
     topProducts,
     confirmedProducts,
