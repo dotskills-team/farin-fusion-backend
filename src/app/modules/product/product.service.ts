@@ -75,6 +75,8 @@ const createProductService = async (
     delete payload.buyingPrice;
   }
 
+  payload.createdBy = new mongoose.Types.ObjectId(user.userId);
+
   const product = await Product.create(payload);
   return product;
 };
@@ -124,6 +126,9 @@ const updateProduct = async (
   //   product.availableStock = payload.totalAddedStock;
   // }
 
+  product.lastUpdatedBy = new mongoose.Types.ObjectId(user.userId);
+  product.lastUpdatedAt = new Date();
+
   // STOCK UPDATE
   if (payload?.totalAddedStock !== undefined) {
     const stockChange = Number(payload.totalAddedStock);
@@ -171,6 +176,8 @@ const getSingleProduct = async (slug: string) => {
   const product = await Product.findOne({ slug })
     .populate("category", "title slug")
     .populate("brand", "title slug")
+    .populate("createdBy", "name email phone role profileImage")
+    .populate("lastUpdatedBy", "name email phone role profileImage")
     .populate(
       "lastStockUpdatedBy",
       "name fullName firstName lastName email phone role profileImage",
@@ -419,6 +426,8 @@ const getAllProducts = async (query: Record<string, string>) => {
     Product.find(productQuery)
       .populate("category")
       .populate("brand")
+      .populate("createdBy", "name email phone role profileImage")
+      .populate("lastUpdatedBy", "name email phone role profileImage")
       .populate(
         "lastStockUpdatedBy",
         "name fullName firstName lastName email phone role profileImage",

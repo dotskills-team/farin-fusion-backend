@@ -96,6 +96,22 @@ const productSchema = new Schema<IProduct>(
       type: Date,
       default: null,
     },
+     createdBy: {
+      type: Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    lastUpdatedBy: {
+      type: Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    lastUpdatedAt: {
+      type: Date,
+      default: null,
+    },
     totalSold: {
       type: Number,
       default: 0,

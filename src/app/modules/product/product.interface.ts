@@ -11,7 +11,10 @@ export interface IProduct {
   totalReturned: number;
   barcode?: string;
   lastStockUpdatedBy?: Types.ObjectId;
-lastStockUpdatedAt?: Date;
+  lastStockUpdatedAt?: Date;
+  createdBy?: Types.ObjectId;
+  lastUpdatedBy?: Types.ObjectId;
+  lastUpdatedAt?: Date;
   restockCount: number;
   isBestSelling?: boolean;
   // Basic Info
