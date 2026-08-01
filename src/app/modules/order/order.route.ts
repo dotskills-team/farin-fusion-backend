@@ -18,6 +18,18 @@ router.post(
 );
 
 router.get(
+  "/waiting-stock",
+  checkAuth(
+    Role.CUSTOMER,
+    Role.MODERATOR,
+    Role.MANAGER,
+    Role.ADMIN,
+    Role.TELLICELSS,
+  ),
+  OrderControllers.getAllWaitingStockOrders,
+);
+
+router.get(
   "/my-orders",
   checkAuth(
     Role.CUSTOMER,

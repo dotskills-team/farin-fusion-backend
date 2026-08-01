@@ -11,6 +11,7 @@ import {
 import { ProductPurchase } from "./productPurchase.model";
 import { productPurchaseSearchableFields } from "./productPurchase.constant";
 import mongoose from "mongoose";
+import { onProductStockIncreased } from "../order/order.stock";
 
 const validatePaymentData = (
   grandTotal: number,
@@ -128,6 +129,8 @@ const createPurchase = async (
       product.buyingPrice = item.buyingPrice;
 
       await product.save({ session });
+
+      await onProductStockIncreased(product._id, session);
     }
 
     payload.grandTotal = grandTotal;
@@ -255,6 +258,7 @@ const updatePurchase = async (
         product.buyingPrice = item.buyingPrice;
 
         await product.save({ session });
+        await onProductStockIncreased(product._id, session);
       }
 
       payload.grandTotal = grandTotal;

@@ -11,6 +11,7 @@ import { JwtPayload } from "jsonwebtoken";
 import { Order } from "../order/order.model";
 import { Category } from "../category/category.model";
 import { Brand } from "../brand/brand.model";
+import { onProductStockIncreased } from "../order/order.stock";
 
 const generateUniqueBarcode = async () => {
   let barcode = "";
@@ -128,25 +129,28 @@ const updateProduct = async (
 
   product.lastUpdatedBy = new mongoose.Types.ObjectId(user.userId);
   product.lastUpdatedAt = new Date();
+  const stockChanged = payload.totalAddedStock !== undefined;
+  const stockChange = stockChanged ? Number(payload.totalAddedStock) : 0;
 
   // STOCK UPDATE
   if (payload?.totalAddedStock !== undefined) {
-    const stockChange = Number(payload.totalAddedStock);
+    if (stockChanged) {
+      const newTotalAddedStock = (product.totalAddedStock || 0) + stockChange;
 
-    const newTotalAddedStock = (product.totalAddedStock || 0) + stockChange;
-    const newAvailableStock = (product.availableStock || 0) + stockChange;
+      const newAvailableStock = (product.availableStock || 0) + stockChange;
 
-    if (newTotalAddedStock < 0 || newAvailableStock < 0) {
-      throw new AppError(httpStatus.BAD_REQUEST, "Stock cannot be negative");
+      if (newTotalAddedStock < 0 || newAvailableStock < 0) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Stock cannot be negative");
+      }
+
+      product.totalAddedStock = newTotalAddedStock;
+      product.availableStock = newAvailableStock;
+
+      product.lastStockUpdatedBy = new mongoose.Types.ObjectId(user.userId);
+      product.lastStockUpdatedAt = new Date();
+
+      delete payload.totalAddedStock;
     }
-
-    product.totalAddedStock = newTotalAddedStock;
-    product.availableStock = newAvailableStock;
-
-    product.lastStockUpdatedBy = new mongoose.Types.ObjectId(user.userId);
-    product.lastStockUpdatedAt = new Date();
-
-    delete payload.totalAddedStock;
   }
 
   if (payload.images) {
@@ -161,14 +165,31 @@ const updateProduct = async (
     product.images = payload.images;
   }
 
-  const updatableFields = { ...payload };
-
   if (user.role !== "ADMIN") {
     delete payload.buyingPrice;
   }
+
+  const updatableFields = { ...payload };
   Object.assign(product, updatableFields);
 
   await product.save();
+
+  if (stockChanged && stockChange > 0) {
+    const session = await mongoose.startSession();
+
+    try {
+      session.startTransaction();
+
+      await onProductStockIncreased(product._id, session);
+
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
+    }
+  }
   return product;
 };
 

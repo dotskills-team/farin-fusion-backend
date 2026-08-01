@@ -178,6 +178,18 @@ const getCustomerOrder = catchAsync(async (req, res) => {
   });
 });
 
+const getAllWaitingStockOrders = catchAsync(async(req,res)=>{
+    const result = await OrderServices.getAllWaitingStockOrders(req.query as Record<string, string>);
+
+    sendResponse(res,{
+        success:true,
+        statusCode:httpStatus.OK,
+        message:"Waiting stock orders retrieved successfully",
+        data:result.data,
+        meta:result.meta,
+    });
+});
+
 const getAllScheduledOrders = catchAsync(async (req, res) => {
   const result = await OrderServices.getAllScheduledOrders(
     req.query as Record<string, string>,
@@ -465,6 +477,7 @@ export const OrderControllers = {
   partialUpdateOrder,
   markNoResponse,
   restoreNoResponseOrder,
+  getAllWaitingStockOrders,
   getMyHoldOrders,
   getAllHoldOrders,
 };

@@ -23,6 +23,8 @@ import { Role } from "../user/user.interface";
 import { Coupon } from "../coupon/coupon.model";
 import { CouponServices } from "../coupon/coupon.service";
 import { JwtPayload } from "jsonwebtoken";
+import { reserveOrderProducts } from "./order.stock";
+import { deductReservedStock, restoreReservedStock } from "./order.inventory";
 
 interface TCreateOrderPayload {
   orderType: OrderType;
@@ -162,27 +164,40 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       payload.shippingCost || 0,
     );
 
+    const reservation = await reserveOrderProducts(
+      calculatedOrder.productsWithPrice.map((item: any) => ({
+        product:
+          typeof item.product === "string"
+            ? new Types.ObjectId(item.product)
+            : new Types.ObjectId(item.product._id),
+        quantity: item.quantity,
+        price: item.price,
+      })),
+      session,
+    );
+
     const isScheduled = payload.scheduleType === "SCHEDULED";
 
     const orderDoc: any = {
       customOrderId: `ORD-${customOrderId}`,
       orderType: payload.orderType,
 
-      products: calculatedOrder.productsWithPrice.map((p: any) => {
-        let productId;
-
-        if (typeof p.product === "string") {
-          productId = p.product;
-        } else if (p.product?._id) {
-          productId = p.product._id;
-        } else {
-          throw new Error("Invalid product in calculatedOrder");
-        }
+      products: calculatedOrder.productsWithPrice.map((item: any) => {
+        const reserved = reservation.products.find(
+          (r) => r.product.toString() === item.product.toString(),
+        );
 
         return {
-          product: new Types.ObjectId(productId),
-          quantity: Number(p.quantity) || 1,
-          price: Number(p.price) || 0,
+          ...item,
+
+          product:
+            typeof item.product === "string"
+              ? new Types.ObjectId(item.product)
+              : new Types.ObjectId(item.product._id),
+
+          reservedQuantity: reserved?.reservedQuantity ?? 0,
+          pendingQuantity: reserved?.pendingQuantity ?? 0,
+          isWaitingStock: reserved?.isWaitingStock ?? false,
         };
       }),
 
@@ -194,7 +209,11 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       scheduledAt: payload.scheduledAt || null,
       isPublished: isScheduled ? false : true,
 
-      orderStatus: OrderStatus.PENDING,
+      orderStatus: reservation.hasWaitingStock
+        ? OrderStatus.WAITING_FOR_STOCK
+        : OrderStatus.PENDING,
+
+      stockReservationCompleted: !reservation.hasWaitingStock,
       advanceDetails: payload.advanceDetails?.option
         ? {
             option: payload.advanceDetails.option,
@@ -312,7 +331,9 @@ const createOrder = async (payload: TCreateOrderPayload) => {
         payment: payment._id,
         transactionId,
 
-        orderStatus: OrderStatus.PENDING,
+        orderStatus: reservation.hasWaitingStock
+          ? OrderStatus.WAITING_FOR_STOCK
+          : OrderStatus.PENDING,
         note: payload.note || "Auto generated order",
       },
       { returnDocument: "after", session },
@@ -321,17 +342,17 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       .populate("seller", "name email _id role phone")
       .populate("products.product");
 
-    await Promise.all(
-      sanitizedProducts.map(async (p) => {
-        const product = await Product.findById(p.product).session(session);
+    // await Promise.all(
+    //   sanitizedProducts.map(async (p) => {
+    //     const product = await Product.findById(p.product).session(session);
 
-        if (product) {
-          product.totalSold = (product.totalSold || 0) + p.quantity;
-          product.availableStock = (product.availableStock || 0) - p.quantity;
-          await product.save({ session });
-        }
-      }),
-    );
+    //     if (product) {
+    //       product.totalSold = (product.totalSold || 0) + p.quantity;
+    //       product.availableStock = (product.availableStock || 0) - p.quantity;
+    //       await product.save({ session });
+    //     }
+    //   }),
+    // );
 
     await session.commitTransaction();
     session.endSession();
@@ -386,18 +407,7 @@ const restoreNoResponseOrder = async (orderId: string) => {
 
     // Stock deduct again
     if ((existingOrder as any).isRestocked) {
-      for (const item of existingOrder.products) {
-        await Product.findByIdAndUpdate(
-          item.product,
-          {
-            $inc: {
-              availableStock: -item.quantity,
-              totalSold: item.quantity,
-            },
-          },
-          { session },
-        );
-      }
+      await deductReservedStock(existingOrder, session);
 
       (existingOrder as any).isRestocked = false;
     }
@@ -444,37 +454,25 @@ const markOrderNoResponse = async (orderId: string) => {
     }
 
     if (!(existingOrder as any).isRestocked) {
-      for (const item of existingOrder.products) {
-        const before = await Product.findById(item.product).session(session);
+      // for (const item of existingOrder.products) {
+      //   const before = await Product.findById(item.product).session(session);
 
-        // console.log("========== BEFORE ==========");
-        // console.log({
-        //   product: before?.title,
-        //   availableStock: before?.availableStock,
-        //   totalSold: before?.totalSold,
-        // });
+      // console.log("========== BEFORE ==========");
+      // console.log({
+      //   product: before?.title,
+      //   availableStock: before?.availableStock,
+      //   totalSold: before?.totalSold,
+      // });
 
-        await Product.findByIdAndUpdate(
-          item.product,
-          {
-            $inc: {
-              availableStock: item.quantity,
-              totalSold: -item.quantity,
-            },
-          },
-          {
-            session,
-            returnDocument: "after",
-          },
-        );
+      await restoreReservedStock(existingOrder, session);
 
-        // console.log("========== AFTER ==========");
-        // console.log({
-        //   product: updated?.title,
-        //   availableStock: updated?.availableStock,
-        //   totalSold: updated?.totalSold,
-        // });
-      }
+      // console.log("========== AFTER ==========");
+      // console.log({
+      //   product: updated?.title,
+      //   availableStock: updated?.availableStock,
+      //   totalSold: updated?.totalSold,
+      // });
+      // }
 
       existingOrder.isRestocked = true;
     }
@@ -595,24 +593,7 @@ const updateManualDeliveryStatus = async (
 
     if (deliveryStatus === DeliveryStatus.CANCELLED) {
       if (!(order as any).isRestocked) {
-        for (const item of order.products) {
-          const product = await Product.findById(item.product).session(session);
-
-          if (!product) {
-            throw new AppError(httpStatus.NOT_FOUND, "Product not found");
-          }
-
-          await Product.findByIdAndUpdate(
-            item.product,
-            {
-              $inc: {
-                availableStock: item.quantity,
-                totalSold: -Math.min(product?.totalSold ?? 0, item.quantity),
-              },
-            },
-            { session },
-          );
-        }
+        await restoreReservedStock(order, session);
 
         (order as any).isRestocked = true;
       }
@@ -654,18 +635,7 @@ const deleteOrder = async (id: string) => {
     }
 
     if (!(order as any).isRestocked) {
-      for (const item of order.products) {
-        await Product.findByIdAndUpdate(
-          item.product,
-          {
-            $inc: {
-              availableStock: item.quantity,
-              totalSold: -item.quantity,
-            },
-          },
-          { session },
-        );
-      }
+      await restoreReservedStock(order, session);
 
       (order as any).isRestocked = true;
       await order.save({ session });
@@ -708,19 +678,7 @@ const updateOrderCancelStatus = async (
 
     if (previousStatus !== "CANCELLED" && newOrderStatus === "CANCELLED") {
       if (!(existingOrder as any).isRestocked) {
-        for (const item of existingOrder.products) {
-          await Product.findByIdAndUpdate(
-            item.product,
-            {
-              $inc: {
-                availableStock: item.quantity,
-                totalSold: -item.quantity,
-              },
-            },
-            { session },
-          );
-        }
-
+        await restoreReservedStock(existingOrder, session);
         (existingOrder as any).isRestocked = true;
       }
 
@@ -729,18 +687,7 @@ const updateOrderCancelStatus = async (
 
     if (previousStatus === "CANCELLED" && newOrderStatus !== "CANCELLED") {
       if ((existingOrder as any).isRestocked) {
-        for (const item of existingOrder.products) {
-          await Product.findByIdAndUpdate(
-            item.product,
-            {
-              $inc: {
-                availableStock: -item.quantity,
-                totalSold: item.quantity,
-              },
-            },
-            { session },
-          );
-        }
+        await deductReservedStock(existingOrder, session);
 
         (existingOrder as any).isRestocked = false;
       }
@@ -843,7 +790,7 @@ const exchangeOrderItem = async ({
 
     if (!newProduct) throw new AppError(404, "New product not found");
 
-    const qty = item.quantity;
+    const qty = item.reservedQuantity ?? item.quantity;
 
     // RESTORE OLD PRODUCT
     await Product.findByIdAndUpdate(
@@ -1086,6 +1033,7 @@ const getAllOrders = async (query: Record<string, string>) => {
     pickedUp: "pickedUpAt",
     delivered: "deliveredAt",
     partial: "partialDeliveredAt",
+    waitingForStock: "waitingForStock",
     cancelled: "cancelledAt",
     hold: "holdAt",
     noResponse: "noResponseAt",
@@ -1110,6 +1058,10 @@ const getAllOrders = async (query: Record<string, string>) => {
   // STATUS
   if (query.orderStatus) {
     queryObj.orderStatus = query.orderStatus;
+  } else {
+    queryObj.orderStatus = {
+      $ne: OrderStatus.WAITING_FOR_STOCK,
+    };
   }
 
   if (query.deliveryStatus) {
@@ -1130,13 +1082,21 @@ const getAllOrders = async (query: Record<string, string>) => {
     query,
   );
 
+  const matchStage: any = {
+    isDeleted: false,
+    isPublished: true,
+    ...queryObj,
+  };
+
+  if (!query.orderStatus) {
+    matchStage.orderStatus = {
+      $ne: OrderStatus.WAITING_FOR_STOCK,
+    };
+  }
+
   const stats = await Order.aggregate([
     {
-      $match: {
-        isDeleted: false,
-        isPublished: true,
-        ...queryObj,
-      },
+      $match: matchStage,
     },
     {
       $group: {
@@ -1153,6 +1113,7 @@ const getAllOrders = async (query: Record<string, string>) => {
     COMPLETED: 0,
     CANCELLED: 0,
     NO_RESPONSE: 0,
+    WAITING_FOR_STOCK: 0,
   };
 
   stats.forEach((item) => {
@@ -1227,6 +1188,7 @@ const getAllScheduledOrders = async (query: Record<string, string>) => {
     COMPLETED: 0,
     CANCELLED: 0,
     NO_RESPONSE: 0,
+    WAITING_FOR_STOCK: 0,
   };
 
   stats.forEach((item) => {
@@ -1267,7 +1229,7 @@ const getMyScheduledOrders = async (
 
   const queryBuilder = new QueryBuilder(Order.find(baseQuery), query);
 
- const data = await Order.find(baseQuery)
+  const data = await Order.find(baseQuery)
     .populate("customer", "name email phone")
     .populate("seller", "name email role")
     .populate("products.product");
@@ -1317,6 +1279,14 @@ const getMyOrders = async (userId: string, query: Record<string, string>) => {
 
   if (query.orderStatus) {
     queryObj.orderStatus = query.orderStatus;
+  }
+
+  if (query.orderStatus) {
+    queryObj.orderStatus = query.orderStatus;
+  } else {
+    queryObj.orderStatus = {
+      $ne: OrderStatus.WAITING_FOR_STOCK,
+    };
   }
 
   delete query["updatedAt[gte]"];
@@ -1381,6 +1351,7 @@ const getMyOrders = async (userId: string, query: Record<string, string>) => {
     CONFIRMED: 0,
     COMPLETED: 0,
     CANCELLED: 0,
+    WAITING_FOR_STOCK: 0,
   };
 
   statsAgg.forEach((item) => {
@@ -1429,7 +1400,7 @@ const getAllHoldOrders = async (query: Record<string, string>) => {
 
   const queryBuilder = new QueryBuilder(Order.find(queryObj), query);
 
-const data = await Order.find(queryObj)
+  const data = await Order.find(queryObj)
     .populate("customer", "name email phone")
     .populate("seller", "name email role")
     .populate("products.product");
@@ -1456,6 +1427,7 @@ const data = await Order.find(queryObj)
     COMPLETED: 0,
     CANCELLED: 0,
     NO_RESPONSE: 0,
+    WAITING_FOR_STOCK: 0,
   };
 
   stats.forEach((item) => {
@@ -1496,7 +1468,7 @@ const getMyHoldOrders = async (
 
   const queryBuilder = new QueryBuilder(Order.find(baseQuery), query);
 
- const data = await Order.find(baseQuery)
+  const data = await Order.find(baseQuery)
     .populate("customer", "name email phone")
     .populate("seller", "name email role")
     .populate("products.product");
@@ -1554,6 +1526,36 @@ const getAllNoResponseOrders = async (query: Record<string, string>) => {
   return { data, meta };
 };
 
+const getAllWaitingStockOrders = async (query: Record<string, string>) => {
+  const queryBuilder = new QueryBuilder(
+    Order.find({
+      isDeleted: false,
+      isPublished: true,
+      orderStatus: OrderStatus.WAITING_FOR_STOCK,
+    }),
+    query,
+  );
+
+  const ordersData = queryBuilder
+    .search(orderSearchableFields)
+    .filter()
+    .sort()
+    .fields()
+    .paginate()
+    .build()
+    .populate("customer", "name email phone")
+    .populate("seller", "name email role phone")
+    .populate("payment")
+    .populate("products.product");
+
+  const [data, meta] = await Promise.all([ordersData, queryBuilder.getMeta()]);
+
+  return {
+    data,
+    meta,
+  };
+};
+
 const getAllDamagedProducts = async () => {
   const orders = await Order.find({ isDeleted: false, isPublished: true })
     .populate("products.product")
@@ -1598,6 +1600,7 @@ export const OrderServices = {
   getAllScheduledOrders,
   getAllDamagedProducts,
   exchangeOrderItem,
+  getAllWaitingStockOrders,
   markOrderDamage,
   updateManualDeliveryStatus,
   getMyScheduledOrders,

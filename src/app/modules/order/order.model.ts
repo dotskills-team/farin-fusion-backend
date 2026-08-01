@@ -99,8 +99,30 @@ const orderSchema = new Schema<IOrder>(
           type: Schema.Types.ObjectId,
           ref: "Product",
         },
+
         title: String,
+
         quantity: Number,
+
+        reservedQuantity: {
+          type: Number,
+          default: 0,
+        },
+
+        pendingQuantity: {
+          type: Number,
+          default: 0,
+        },
+
+        isWaitingStock: {
+          type: Boolean,
+          default: false,
+        },
+        fulfilledAt: {
+          type: Date,
+          default: null,
+        },
+
         price: Number,
       },
     ],
@@ -178,6 +200,16 @@ const orderSchema = new Schema<IOrder>(
     isRestocked: {
       type: Boolean,
       default: false,
+    },
+
+    stockReservationCompleted: {
+      type: Boolean,
+      default: true,
+    },
+
+    waitingStockResolvedAt: {
+      type: Date,
+      default: null,
     },
 
     seller: {

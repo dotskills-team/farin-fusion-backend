@@ -9,6 +9,7 @@ export enum OrderStatus {
   PENDING = "PENDING",
   RESPONDED = "RESPONDED",
   COMPLETED = "COMPLETED",
+  WAITING_FOR_STOCK = "WAITING_FOR_STOCK",
   CONFIRMED = "CONFIRMED",
   PARTIAL = "PARTIAL",
   PROCESSING = "PROCESSING",
@@ -46,9 +47,13 @@ export enum AdvanceOption {
 export interface IOrderProduct {
   product: Types.ObjectId;
   quantity: number;
+  reservedQuantity?: number;
+  pendingQuantity?: number;
+  isWaitingStock?: boolean;
   title?: string;
   price: number;
   lineTotal?: number;
+  fulfilledAt?: Date;
 }
 
 export interface IBillingDetails {
@@ -71,6 +76,9 @@ export interface IOrder {
   pickedUpAt?: Date;
   holdAt?: Date;
   deliveredAt?: Date;
+  stockReservationCompleted?: boolean;
+
+  waitingStockResolvedAt?: Date | null;
   partialDeliveredAt?: Date;
   cancelledAt?: Date;
   noResponseAt?: Date | null;
