@@ -338,7 +338,6 @@ const createOrder = async (payload: TCreateOrderPayload) => {
         (sum: number, item: any) => sum + item.price * item.quantity,
         0,
       );
-
       let total = subtotal + config.shippingCost;
 
       let discount = config.discount;
@@ -351,8 +350,9 @@ const createOrder = async (payload: TCreateOrderPayload) => {
 
       let advanceAmount = 0;
 
-      if (advanceAmount > 0) {
-        total -= advanceAmount;
+      if (payload.advanceDetails?.option && remainingAdvance > 0) {
+        advanceAmount = Math.min(remainingAdvance, total);
+        remainingAdvance -= advanceAmount;
       }
 
       if (payload.advanceDetails?.option && remainingAdvance > 0) {
