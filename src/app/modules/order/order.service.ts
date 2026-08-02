@@ -135,7 +135,7 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       return counter.seq;
     };
 
-    const customOrderId = await getNextCustomOrderId(session);
+    // const customOrderId = await getNextCustomOrderId(session);
 
     const sanitizedProducts = payload.products.map((p: any) => {
       if (!p.product) {
@@ -176,52 +176,83 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       session,
     );
 
+    const availableProducts: any[] = [];
+    const waitingProducts: any[] = [];
+
+    for (const item of calculatedOrder.productsWithPrice) {
+      const reserved = reservation.products.find(
+        (r) =>
+          r.product.toString() ===
+          (typeof item.product === "string"
+            ? item.product
+            : item.product._id
+          ).toString(),
+      );
+
+      const orderItem = {
+        ...item,
+
+        product:
+          typeof item.product === "string"
+            ? new Types.ObjectId(item.product)
+            : new Types.ObjectId(item.product._id),
+
+        reservedQuantity: reserved?.reservedQuantity ?? 0,
+        pendingQuantity: reserved?.pendingQuantity ?? 0,
+        isWaitingStock: reserved?.isWaitingStock ?? false,
+      };
+
+      if (orderItem.isWaitingStock) {
+        waitingProducts.push(orderItem);
+      } else {
+        availableProducts.push(orderItem);
+      }
+    }
+
     const isScheduled = payload.scheduleType === "SCHEDULED";
 
-    const orderDoc: any = {
-      customOrderId: `ORD-${customOrderId}`,
-      orderType: payload.orderType,
+    const orderConfigs: {
+      products: any[];
+      status: OrderStatus;
+      stockReservationCompleted: boolean;
+      shippingCost: number;
+      discount: number;
+    }[] = [];
 
-      products: calculatedOrder.productsWithPrice.map((item: any) => {
-        const reserved = reservation.products.find(
-          (r) => r.product.toString() === item.product.toString(),
-        );
+    if (availableProducts.length > 0) {
+      orderConfigs.push({
+        products: availableProducts,
+        status: OrderStatus.PENDING,
+        stockReservationCompleted: true,
 
-        return {
-          ...item,
+        // Instant order receives shipping & discount
+        shippingCost: payload.shippingCost || 0,
+        discount: payload.discount || 0,
+      });
+    }
 
-          product:
-            typeof item.product === "string"
-              ? new Types.ObjectId(item.product)
-              : new Types.ObjectId(item.product._id),
+    if (waitingProducts.length > 0) {
+      orderConfigs.push({
+        products: waitingProducts,
+        status: OrderStatus.WAITING_FOR_STOCK,
+        stockReservationCompleted: false,
 
-          reservedQuantity: reserved?.reservedQuantity ?? 0,
-          pendingQuantity: reserved?.pendingQuantity ?? 0,
-          isWaitingStock: reserved?.isWaitingStock ?? false,
-        };
-      }),
+        // Waiting order gets no shipping/discount
+        shippingCost: availableProducts.length ? 0 : payload.shippingCost || 0,
+        discount: availableProducts.length ? 0 : payload.discount || 0,
+      });
+    }
 
-      subtotal: calculatedOrder.subtotal,
-      shippingCost: calculatedOrder.shippingCost,
-      total: payload?.total || calculatedOrder.totalPrice,
-      discount: payload?.discount || 0,
-      scheduleType: payload.scheduleType || "INSTANT",
-      scheduledAt: payload.scheduledAt || null,
-      isPublished: isScheduled ? false : true,
+    const customOrderIds: number[] = [];
 
-      orderStatus: reservation.hasWaitingStock
-        ? OrderStatus.WAITING_FOR_STOCK
-        : OrderStatus.PENDING,
+    const totalOrdersToCreate =
+      (availableProducts.length ? 1 : 0) + (waitingProducts.length ? 1 : 0);
 
-      stockReservationCompleted: !reservation.hasWaitingStock,
-      advanceDetails: payload.advanceDetails?.option
-        ? {
-            option: payload.advanceDetails.option,
-            amount: payload.advanceDetails.amount || 0,
-          }
-        : undefined,
-      confirmedBy: null,
-    };
+    for (let i = 0; i < totalOrdersToCreate; i++) {
+      customOrderIds.push(await getNextCustomOrderId(session));
+    }
+
+    let couponDiscount = 0;
 
     if (payload.couponCode) {
       const coupon = await CouponServices.applyCoupon(
@@ -229,12 +260,17 @@ const createOrder = async (payload: TCreateOrderPayload) => {
         calculatedOrder.totalPrice,
       );
 
-      orderDoc.discount = coupon.discount;
-      orderDoc.total = coupon.finalTotal;
+      couponDiscount = coupon.discount;
 
-      await Coupon.findByIdAndUpdate(coupon.couponId, {
-        $inc: { usedCount: 1 },
-      });
+      await Coupon.findByIdAndUpdate(
+        coupon.couponId,
+        {
+          $inc: {
+            usedCount: 1,
+          },
+        },
+        { session },
+      );
     }
 
     // if (
@@ -244,30 +280,23 @@ const createOrder = async (payload: TCreateOrderPayload) => {
     //   throw new AppError(400, "Advance amount cannot exceed payable total");
     // }
 
-    if (orderDoc.advanceDetails?.option && orderDoc.advanceDetails?.amount) {
-      orderDoc.total = orderDoc.total;
-    }
-
     // Link customer only if a valid email exists
-    if (payload?.billingDetails?.email) {
-      const isUserExist = await User.findOne({
+    let customerId: Types.ObjectId | undefined;
+
+    if (payload.billingDetails?.email) {
+      const customer = await User.findOne({
         email: payload.billingDetails.email,
       }).session(session);
 
-      if (isUserExist) {
-        orderDoc.customer = isUserExist._id;
+      if (customer) {
+        customerId = customer._id;
       }
-    }
-
-    if (payload.billingDetails) {
-      orderDoc.billingDetails = payload.billingDetails;
     }
 
     if (payload.orderType === OrderType.POS) {
       if (!payload.seller) {
         throw new AppError(httpStatus.BAD_REQUEST, "Seller required");
       }
-      orderDoc.seller = payload.seller;
     }
 
     // Prevent duplicate POS orders from the same customer on the same day.
@@ -299,48 +328,135 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       }
     }
 
-    const order = new Order(orderDoc);
-    await order.save({ session });
+    const createdOrders = [];
+    let remainingAdvance = payload.advanceDetails?.amount || 0;
 
-    const orderId = order?._id;
+    for (let index = 0; index < orderConfigs.length; index++) {
+      const config = orderConfigs[index];
 
-    const transactionId = getTransactionId();
+      const subtotal = config.products.reduce(
+        (sum: number, item: any) => sum + item.price * item.quantity,
+        0,
+      );
 
-    const [payment] = await Payment.create(
-      [
+      let total = subtotal + config.shippingCost;
+
+      let discount = config.discount;
+
+      if (payload.couponCode && config.discount > 0) {
+        discount += couponDiscount;
+      }
+
+      total -= discount;
+
+      let advanceAmount = 0;
+
+      if (advanceAmount > 0) {
+        total -= advanceAmount;
+      }
+
+      if (payload.advanceDetails?.option && remainingAdvance > 0) {
+        advanceAmount = Math.min(remainingAdvance, total);
+        remainingAdvance -= advanceAmount;
+      }
+
+      const orderDoc: any = {
+        customOrderId: `ORD-${customOrderIds[index]}`,
+
+        orderType: payload.orderType,
+
+        products: config.products,
+
+        subtotal,
+
+        shippingCost: config.shippingCost,
+
+        discount,
+
+        total,
+
+        scheduleType: payload.scheduleType || "INSTANT",
+
+        scheduledAt: payload.scheduledAt || null,
+
+        isPublished: isScheduled ? false : true,
+
+        orderStatus: config.status,
+
+        stockReservationCompleted: config.stockReservationCompleted,
+
+        advanceDetails:
+          payload.advanceDetails?.option && advanceAmount > 0
+            ? {
+                option: payload.advanceDetails.option,
+                amount: advanceAmount,
+              }
+            : undefined,
+
+        confirmedBy: null,
+
+        billingDetails: payload.billingDetails,
+      };
+
+      if (customerId) {
+        orderDoc.customer = customerId;
+      }
+
+      if (payload.orderType === OrderType.POS) {
+        orderDoc.seller = payload.seller;
+      }
+
+      const order = new Order(orderDoc);
+
+      await order.save({ session });
+
+      const transactionId = getTransactionId();
+
+      const [payment] = await Payment.create(
+        [
+          {
+            order: order._id,
+
+            transactionId,
+
+            amount: orderDoc.total,
+
+            paymentStatus:
+              payload.paymentMethod === PaymentMethod.COD
+                ? PaymentStatus.PAID
+                : PaymentStatus.UNPAID,
+
+            paymentMethod: payload.paymentMethod,
+          },
+        ],
+        { session },
+      );
+
+      const updated = await Order.findByIdAndUpdate(
+        order._id,
         {
-          order: orderId,
+          payment: payment._id,
+
           transactionId,
-          amount: orderDoc.total,
 
-          paymentStatus:
-            payload.paymentMethod === PaymentMethod.COD
-              ? PaymentStatus.PAID
-              : PaymentStatus.UNPAID,
-
-          paymentMethod: payload.paymentMethod,
+          note: payload.note || "Auto generated order",
         },
-      ],
-      { session },
-    );
+        {
+          returnDocument: "after",
+          session,
+        },
+      )
+        .populate("customer", "name email _id role phone")
+        .populate("seller", "name email _id role phone")
+        .populate("payment")
+        .populate("products.product")
+        .populate("confirmedBy", "name email _id role phone");
 
-    updatedOrder = await Order.findByIdAndUpdate(
-      orderId,
+      createdOrders.push(updated);
+    }
 
-      {
-        payment: payment._id,
-        transactionId,
-
-        orderStatus: reservation.hasWaitingStock
-          ? OrderStatus.WAITING_FOR_STOCK
-          : OrderStatus.PENDING,
-        note: payload.note || "Auto generated order",
-      },
-      { returnDocument: "after", session },
-    )
-      .populate("customer", "name email _id role phone")
-      .populate("seller", "name email _id role phone")
-      .populate("products.product");
+    updatedOrder =
+      createdOrders.length === 1 ? createdOrders[0] : createdOrders;
 
     // await Promise.all(
     //   sanitizedProducts.map(async (p) => {
