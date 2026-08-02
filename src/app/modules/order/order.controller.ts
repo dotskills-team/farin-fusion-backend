@@ -32,7 +32,7 @@ const getMyOrders = catchAsync(async (req: Request, res: Response) => {
     message: "Orders Retrieved Successfully",
     meta: result.meta,
     data: result.data,
-    stats: result.stats,
+    stats: result.stats || { total: 0, PENDING: 0, CONFIRMED: 0, COMPLETED: 0, CANCELLED: 0 },
   });
 });
 
@@ -47,7 +47,7 @@ const getAllOrders = catchAsync(async (req: Request, res: Response) => {
     message: "All Orders Retrieved Successfully",
     meta: result.meta,
     data: result.data,
-    stats: result.stats,
+    stats: result.stats || { total: 0, PENDING: 0, CONFIRMED: 0, COMPLETED: 0, CANCELLED: 0 },
   });
 });
 
@@ -199,6 +199,22 @@ const getAllScheduledOrders = catchAsync(async (req, res) => {
     success: true,
     statusCode: 200,
     message: "Scheduled orders retrieved",
+    data: result.data,
+    meta: result.meta,
+    stats: result.stats || { total: 0, PENDING: 0, CONFIRMED: 0, COMPLETED: 0, CANCELLED: 0 },
+  });
+});
+
+const getMyWaitingForStockOrders = catchAsync(async (req, res) => {
+  const result = await OrderServices.getMyWaitingForStockOrders(
+    req.user.userId,
+    req.query as Record<string, string>,
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Waiting for stock orders retrieved successfully",
     data: result.data,
     meta: result.meta,
     stats: result.stats,
@@ -479,5 +495,6 @@ export const OrderControllers = {
   restoreNoResponseOrder,
   getAllWaitingStockOrders,
   getMyHoldOrders,
+  getMyWaitingForStockOrders,
   getAllHoldOrders,
 };

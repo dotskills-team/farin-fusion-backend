@@ -1378,6 +1378,128 @@ const getMyOrders = async (userId: string, query: Record<string, string>) => {
   return { data: orders, meta, stats };
 };
 
+const getMyWaitingForStockOrders = async (
+  userId: string,
+  query: Record<string, string>,
+) => {
+  await publishScheduledOrders();
+
+  const queryObj: any = {
+    orderStatus: OrderStatus.WAITING_FOR_STOCK,
+  };
+
+  // DATE FILTER
+  if (query["updatedAt[gte]"] || query["updatedAt[lte]"]) {
+    queryObj.updatedAt = {};
+
+    if (query["updatedAt[gte]"]) {
+      queryObj.updatedAt.$gte = new Date(query["updatedAt[gte]"]);
+    }
+
+    if (query["updatedAt[lte]"]) {
+      queryObj.updatedAt.$lte = new Date(query["updatedAt[lte]"]);
+    }
+  }
+
+  if (query.deliveryStatus) {
+    queryObj.deliveryStatus = query.deliveryStatus;
+  }
+
+  delete query["updatedAt[gte]"];
+  delete query["updatedAt[lte]"];
+
+  const user = await User.findById(userId).select("role email");
+
+  if (!user) {
+    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+  }
+
+  let baseQuery;
+
+  if (user.role === Role.CUSTOMER) {
+    baseQuery = Order.find({
+      isDeleted: false,
+      isPublished: true,
+      "billingDetails.email": user.email,
+      ...queryObj,
+    });
+  } else if (
+    [Role.MODERATOR, Role.MANAGER, Role.TELLICELSS, Role.ADMIN].includes(
+      user.role,
+    )
+  ) {
+    baseQuery = Order.find({
+      isDeleted: false,
+      isPublished: true,
+      seller: userId,
+      ...queryObj,
+    });
+  } else {
+    throw new AppError(httpStatus.FORBIDDEN, "Access denied");
+  }
+
+  const matchStage = {
+    isDeleted: false,
+    isPublished: true,
+    ...(user.role === Role.CUSTOMER
+      ? { "billingDetails.email": user.email }
+      : { seller: new Types.ObjectId(userId) }),
+    ...queryObj,
+  };
+
+  const statsAgg = await Order.aggregate([
+    {
+      $match: matchStage,
+    },
+    {
+      $group: {
+        _id: "$orderStatus",
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  const stats = {
+    total: 0,
+    PENDING: 0,
+    CONFIRMED: 0,
+    COMPLETED: 0,
+    CANCELLED: 0,
+    WAITING_FOR_STOCK: 0,
+  };
+
+  statsAgg.forEach((item) => {
+    if (item._id in stats) {
+      stats[item._id as keyof typeof stats] = item.count;
+    }
+
+    stats.total += item.count;
+  });
+
+  const queryBuilder = new QueryBuilder(baseQuery, query)
+    .search(orderSearchableFields)
+    .filter()
+    .sort()
+    .fields()
+    .paginate();
+
+  const orders = await queryBuilder
+    .build()
+    .populate("customer", "name email _id role phone")
+    .populate("seller", "name email _id role phone")
+    .populate("payment")
+    .populate("products.product")
+    .populate("confirmedBy", "name email _id role phone");
+
+  const meta = await queryBuilder.getMeta();
+
+  return {
+    data: orders,
+    meta,
+    stats,
+  };
+};
+
 const getAllHoldOrders = async (query: Record<string, string>) => {
   const queryObj: any = {
     isDeleted: false,
@@ -1604,6 +1726,7 @@ export const OrderServices = {
   markOrderDamage,
   updateManualDeliveryStatus,
   getMyScheduledOrders,
+  getMyWaitingForStockOrders,
   getMyOrders,
   restoreNoResponseOrder,
   updateOrderCancelStatus,

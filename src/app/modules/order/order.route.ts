@@ -48,6 +48,12 @@ router.get(
 );
 
 router.get(
+  "/my-waiting-for-stock",
+   checkAuth(...Object.values(Role)),
+  OrderControllers.getMyWaitingForStockOrders,
+);
+
+router.get(
   "/",
   checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS, Role.MODERATOR),
   OrderControllers.getAllOrders,
