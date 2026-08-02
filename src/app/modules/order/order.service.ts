@@ -252,26 +252,29 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       customOrderIds.push(await getNextCustomOrderId(session));
     }
 
-    let couponDiscount = 0;
+if (payload.couponCode) {
+  const coupon = await Coupon.findOne({
+    code: payload.couponCode,
+    isDeleted: false,
+  }).session(session);
 
-    if (payload.couponCode) {
-      const coupon = await CouponServices.applyCoupon(
-        payload.couponCode,
-        calculatedOrder.totalPrice,
-      );
+  if (!coupon) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Invalid coupon",
+    );
+  }
 
-      couponDiscount = coupon.discount;
-
-      await Coupon.findByIdAndUpdate(
-        coupon.couponId,
-        {
-          $inc: {
-            usedCount: 1,
-          },
-        },
-        { session },
-      );
-    }
+  await Coupon.findByIdAndUpdate(
+    coupon._id,
+    {
+      $inc: {
+        usedCount: 1,
+      },
+    },
+    { session },
+  );
+}
 
     // if (
     //   payload.advanceDetails?.amount &&
@@ -340,20 +343,11 @@ const createOrder = async (payload: TCreateOrderPayload) => {
       );
       let total = subtotal + config.shippingCost;
 
-      let discount = config.discount;
-
-      if (payload.couponCode && config.discount > 0) {
-        discount += couponDiscount;
-      }
+      const discount = config.discount;
 
       total -= discount;
 
       let advanceAmount = 0;
-
-      if (payload.advanceDetails?.option && remainingAdvance > 0) {
-        advanceAmount = Math.min(remainingAdvance, total);
-        remainingAdvance -= advanceAmount;
-      }
 
       if (payload.advanceDetails?.option && remainingAdvance > 0) {
         advanceAmount = Math.min(remainingAdvance, total);
