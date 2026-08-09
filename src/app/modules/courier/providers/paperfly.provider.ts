@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
 import axios from "axios";
 import httpStatus from "http-status-codes";
 import AppError from "../../../errorHelpers/appError";
@@ -10,21 +11,18 @@ import {
 } from "../courier.interface";
 import { Order } from "../../order/order.model";
 import { DeliveryStatus } from "../../order/order.interface";
-import { syncCourierOrderStatus } from "../courier.service";
 import { getCourierConfig } from "./getCourierConfig";
 import { CourierProvider } from "../../courierSettings/courierSettings.interface";
 
-// const BASE_URL = process.env.PAPERFLY_BASE_URL!;
+const MAX_PRODUCT_BRIEF_LENGTH = 200;
 
-// const auth = {
-//   username: process.env.PAPERFLY_USERNAME!,
-//   password: process.env.PAPERFLY_PASSWORD!,
-// };
+let paperflyConfigCache: Awaited<
+  ReturnType<typeof getPaperflyCredentials>
+> | null = null;
 
-// const headers = {
-//   paperflykey: process.env.PAPERFLY_API_KEY!,
-//   "Content-Type": "application/json",
-// };
+let paperflyConfigCacheTime = 0;
+
+const PAPERFLY_CONFIG_TTL = 5 * 60 * 1000;
 
 const getPaperflyCredentials = async () => {
   const settings = await getCourierConfig(CourierProvider.PAPERFLY);
@@ -56,7 +54,23 @@ const getPaperflyCredentials = async () => {
   };
 };
 
-const MAX_PRODUCT_BRIEF_LENGTH = 200;
+const getCachedPaperflyCredentials = async () => {
+  const now = Date.now();
+
+  if (
+    paperflyConfigCache &&
+    now - paperflyConfigCacheTime < PAPERFLY_CONFIG_TTL
+  ) {
+    return paperflyConfigCache;
+  }
+
+  const config = await getPaperflyCredentials();
+
+  paperflyConfigCache = config;
+  paperflyConfigCacheTime = now;
+
+  return config;
+};
 
 const buildProductDescription = (products: any[], maxLength: number) => {
   let parts = products.map((p: any) => ({
@@ -82,6 +96,7 @@ const buildProductDescription = (products: any[], maxLength: number) => {
   const availableForNames = maxLength - reservedLength;
 
   const shrinkRatio = availableForNames / totalNamesLength;
+
   const minLength = 5;
 
   parts = parts.map((p: any) => {
@@ -94,7 +109,7 @@ const buildProductDescription = (products: any[], maxLength: number) => {
     if (newLen < p.name.length) {
       return {
         ...p,
-        name: p.name.slice(0, newLen - 3) + "...",
+        name: p.name.slice(0, Math.max(newLen - 3, 1)) + "...",
       };
     }
 
@@ -162,19 +177,37 @@ const mapOrderToPaperfly = (order: any, merchantReference: string) => {
   };
 };
 
-const createCourier = async (orderId: string) => {
-  const order = await Order.findById(orderId).populate("products.product");
+const createCourier = async (orderId: string, courierId?: string) => {
+  const order = await Order.findById(orderId)
+    .select(
+      "_id customOrderId total billingDetails products courierName trackingNumber courierAssignedAt",
+    )
+    .populate({
+      path: "products.product",
+      select: "title",
+    });
 
   if (!order) {
     throw new AppError(httpStatus.NOT_FOUND, "Order not found");
   }
 
-  const existingPaperflyCouriers = await Courier.find({
-    order: order._id,
-    courierName: CourierName.PAPERFLY,
-  }).sort({ createdAt: 1 });
+  const [reassignCount, activeCourier] = await Promise.all([
+    Courier.countDocuments({
+      order: order._id,
+      courierName: CourierName.PAPERFLY,
+    }),
 
-  const reassignCount = existingPaperflyCouriers.length;
+    Courier.findOne({
+      order: order._id,
+      courierName: CourierName.PAPERFLY,
+      status: {
+        $ne: CourierStatus.CANCELLED,
+      },
+      isDeleted: {
+        $ne: true,
+      },
+    }).sort({ createdAt: -1 }),
+  ]);
 
   const merchantReference =
     reassignCount === 0
@@ -184,59 +217,107 @@ const createCourier = async (orderId: string) => {
   const payload = mapOrderToPaperfly(order, merchantReference);
 
   try {
-    const config = await getPaperflyCredentials();
+    const config = await getCachedPaperflyCredentials();
 
-    const res = await axios.post(
+    const response = await axios.post(
       `${config.baseUrl}/merchant/api/service/new_order_v2.php`,
       payload,
       {
         auth: config.auth,
         headers: config.headers,
+
+        timeout: 15000,
       },
     );
 
-    const success = res.data?.success;
+    const success = response.data?.success;
 
     if (!success) {
       throw new AppError(
         httpStatus.BAD_REQUEST,
-        res.data?.message || "Paperfly courier creation failed",
+        response.data?.message || "Paperfly courier creation failed",
       );
     }
 
-    const activeCourier = existingPaperflyCouriers.find(
-      (c) => c.status !== CourierStatus.CANCELLED,
-    );
-
-    if (activeCourier) {
-      activeCourier.status = CourierStatus.CANCELLED;
-      activeCourier.deliveryStatus = CourierDeliveryStatus.CANCELLED;
-      await activeCourier.save();
+    if (activeCourier && activeCourier._id.toString() !== courierId) {
+      await Courier.findByIdAndUpdate(activeCourier._id, {
+        status: CourierStatus.CANCELLED,
+        deliveryStatus: CourierDeliveryStatus.CANCELLED,
+      });
     }
 
-    const courier = await Courier.create({
-      order: order._id,
+    const courier = courierId
+      ? await Courier.findByIdAndUpdate(
+          courierId,
+          {
+            status: CourierStatus.CREATED,
+            deliveryStatus: CourierDeliveryStatus.PENDING,
+
+            trackingCode: success.tracking_number,
+
+            consignmentId: success.tracking_barcode,
+
+            trackingBarcode: success.tracking_barcode,
+
+            merchantOrderReference: merchantReference,
+
+            rawResponse: response.data,
+          },
+          {
+            new: true,
+          },
+        )
+      : await Courier.create({
+          order: order._id,
+          courierName: CourierName.PAPERFLY,
+
+          status: CourierStatus.CREATED,
+
+          deliveryStatus: CourierDeliveryStatus.PENDING,
+
+          trackingCode: success.tracking_number,
+
+          consignmentId: success.tracking_barcode,
+
+          trackingBarcode: success.tracking_barcode,
+
+          merchantOrderReference: merchantReference,
+
+          rawResponse: response.data,
+        });
+
+    await Order.findByIdAndUpdate(order._id, {
       courierName: CourierName.PAPERFLY,
-      trackingCode: success?.tracking_number,
-      consignmentId: success?.tracking_barcode,
-      trackingBarcode: success?.tracking_barcode,
-      merchantOrderReference: merchantReference,
-      status: CourierStatus.CREATED,
-      rawResponse: res.data,
+
+      trackingNumber: success.tracking_number,
+
+      deliveryStatus: DeliveryStatus.COURIERASSIGNED,
+
+      ...(!order.courierAssignedAt && {
+        courierAssignedAt: new Date(),
+      }),
     });
-
-    order.courierName = CourierName.PAPERFLY;
-    order.trackingNumber = success?.tracking_number;
-    order.deliveryStatus = DeliveryStatus.COURIERASSIGNED;
-    if (!order.courierAssignedAt) {
-      order.courierAssignedAt = new Date();
-    }
-
-    await order.save();
 
     return courier;
   } catch (error: any) {
-    console.log("Paperfly courier creation failed:", error);
+    console.error(
+      "Paperfly courier creation failed:",
+      error?.response?.data || error,
+    );
+
+    if (courierId) {
+      await Courier.findByIdAndUpdate(courierId, {
+        status: CourierStatus.FAILED,
+        deliveryStatus: CourierDeliveryStatus.CANCELLED,
+
+        rawResponse: {
+          error:
+            error?.response?.data ||
+            error?.message ||
+            "Paperfly courier creation failed",
+        },
+      });
+    }
 
     throw new AppError(
       httpStatus.BAD_REQUEST,
@@ -262,9 +343,9 @@ const trackCourier = async (trackingCode: string) => {
     courier.merchantOrderReference || courier.trackingCode;
 
   try {
-    const config = await getPaperflyCredentials();
+    const config = await getCachedPaperflyCredentials();
 
-    const res = await axios.post(
+    const response = await axios.post(
       `${config.baseUrl}/API-Order-Tracking`,
       {
         ReferenceNumber: referenceNumber,
@@ -272,11 +353,11 @@ const trackCourier = async (trackingCode: string) => {
       {
         auth: config.auth,
         headers: config.headers,
-        timeout: 15000,
+        timeout: 10000,
       },
     );
 
-    const tracking = res.data?.success?.trackingStatus?.[0];
+    const tracking = response.data?.success?.trackingStatus?.[0];
 
     if (!tracking) {
       throw new AppError(
@@ -287,16 +368,15 @@ const trackCourier = async (trackingCode: string) => {
 
     const mappedStatus = mapPaperflyStatus(tracking);
 
-    if (courier.deliveryStatus === mappedStatus) {
-      return courier;
+    courier.rawResponse = response.data;
+
+    if (courier.deliveryStatus !== mappedStatus) {
+      courier.deliveryStatus = mappedStatus;
+
+      await courier.save();
+    } else {
+      await courier.save();
     }
-
-    courier.deliveryStatus = mappedStatus;
-    courier.rawResponse = res.data;
-
-    await courier.save();
-
-    await syncCourierOrderStatus(courier, mappedStatus);
 
     return courier;
   } catch (error: any) {
@@ -304,6 +384,7 @@ const trackCourier = async (trackingCode: string) => {
       httpStatus.BAD_REQUEST,
       error?.response?.data?.error?.message ||
         error?.response?.data?.message ||
+        error?.message ||
         "Paperfly tracking failed",
     );
   }

@@ -4,20 +4,75 @@ import { sendResponse } from "../../utils/sendResponse";
 import httpStatus from "http-status-codes";
 import { Courier } from "./courier.model";
 import { getCourierProvider } from "./providers/courier.factory";
-import { CourierName, CourierStatus } from "./courier.interface";
+import { CourierDeliveryStatus, CourierName, CourierStatus } from "./courier.interface";
 
 const createCourier = catchAsync(async (req: Request, res: Response) => {
   const { orderId, courierName } = req.body;
 
+  if (!orderId || !courierName) {
+    return sendResponse(res, {
+      statusCode: httpStatus.BAD_REQUEST,
+      success: false,
+      message: "orderId and courierName are required",
+      data: null,
+    });
+  }
+
   const provider = getCourierProvider(courierName as CourierName);
 
-  const result = await provider.createCourier(orderId);
+  const pendingCourier = await Courier.findOne({
+    order: orderId,
+    courierName,
+    status: CourierStatus.PENDING,
+    isDeleted: { $ne: true },
+  }).sort({ createdAt: -1 });
 
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
+  if (pendingCourier) {
+    return sendResponse(res, {
+      statusCode: httpStatus.ACCEPTED,
+      success: true,
+      message: `${courierName} courier assignment is already processing`,
+      data: pendingCourier,
+    });
+  }
+
+  const courier = await Courier.create({
+    order: orderId,
+    courierName: courierName as CourierName,
+    status: CourierStatus.PENDING,
+    deliveryStatus: CourierDeliveryStatus.PENDING,
+  });
+
+  setImmediate(async () => {
+    try {
+      await provider.createCourier(
+        orderId,
+        courier?._id?.toString() as string,
+      );
+    } catch (error) {
+      console.error(
+        `[${courierName}] background courier creation failed:`,
+        error,
+      );
+
+      await Courier.findByIdAndUpdate(courier._id, {
+        status: CourierStatus.FAILED,
+        deliveryStatus: CourierDeliveryStatus.CANCELLED,
+        rawResponse: {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Courier creation failed",
+        },
+      });
+    }
+  });
+
+  return sendResponse(res, {
+    statusCode: httpStatus.ACCEPTED,
     success: true,
-    message: `${courierName} courier created successfully`,
-    data: result,
+    message: `${courierName} courier assignment started`,
+    data: courier,
   });
 });
 
