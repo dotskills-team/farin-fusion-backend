@@ -1116,7 +1116,7 @@ const assignSeller = async (orderId: string, sellerId: string) => {
     throw new AppError(404, "Seller not found");
   }
 
-  if (!["ADMIN", "MANAGER", "MODERATOR", "TELLICELSS"].includes(seller.role)) {
+  if (!["ADMIN", "MANAGER", "MODERATOR", "TELESALES"].includes(seller.role)) {
     throw new AppError(400, "Invalid seller role");
   }
 
@@ -1330,7 +1330,7 @@ const getMyScheduledOrders = async (
   if (user.role === Role.CUSTOMER) {
     baseQuery["billingDetails.email"] = user.email;
   } else if (
-    [Role.MODERATOR, Role.MANAGER, Role.TELLICELSS].includes(user.role)
+    [Role.MODERATOR, Role.MANAGER, Role.TELESALES].includes(user.role)
   ) {
     baseQuery.seller = userId;
   } else if (user.role === Role.ADMIN) {
@@ -1415,7 +1415,7 @@ const getMyOrders = async (userId: string, query: Record<string, string>) => {
       ...queryObj,
     });
   } else if (
-    [Role.MODERATOR, Role.MANAGER, Role.TELLICELSS].includes(user.role)
+    [Role.MODERATOR, Role.MANAGER, Role.TELESALES].includes(user.role)
   ) {
     baseQuery = Order.find({
       isDeleted: false,
@@ -1534,7 +1534,7 @@ const getMyWaitingForStockOrders = async (
       ...queryObj,
     });
   } else if (
-    [Role.MODERATOR, Role.MANAGER, Role.TELLICELSS, Role.ADMIN].includes(
+    [Role.MODERATOR, Role.MANAGER, Role.TELESALES, Role.ADMIN].includes(
       user.role,
     )
   ) {
@@ -1691,7 +1691,7 @@ const getMyHoldOrders = async (
   if (user.role === Role.CUSTOMER) {
     baseQuery["billingDetails.email"] = user.email;
   } else if (
-    [Role.MODERATOR, Role.MANAGER, Role.TELLICELSS].includes(user.role)
+    [Role.MODERATOR, Role.MANAGER, Role.TELESALES].includes(user.role)
   ) {
     baseQuery.seller = userId;
   } else if (user.role === Role.ADMIN) {

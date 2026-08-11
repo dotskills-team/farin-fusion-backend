@@ -12,7 +12,7 @@ router.post(
   //   Role.MODERATOR,
   //   Role.MANAGER,
   //   Role.ADMIN,
-  //   Role.TELLICELSS,
+  //   Role.TELESALES,
   // ),
   OrderControllers.createOrder,
 );
@@ -24,7 +24,7 @@ router.get(
     Role.MODERATOR,
     Role.MANAGER,
     Role.ADMIN,
-    Role.TELLICELSS,
+    Role.TELESALES,
   ),
   OrderControllers.getAllWaitingStockOrders,
 );
@@ -36,7 +36,7 @@ router.get(
     Role.MODERATOR,
     Role.MANAGER,
     Role.ADMIN,
-    Role.TELLICELSS,
+    Role.TELESALES,
   ),
   OrderControllers.getMyOrders,
 );
@@ -55,7 +55,7 @@ router.get(
 
 router.get(
   "/",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS, Role.MODERATOR),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES, Role.MODERATOR),
   OrderControllers.getAllOrders,
 );
 
@@ -67,19 +67,19 @@ router.get(
 
 router.get(
   "/scheduled-orders",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.getAllScheduledOrders,
 );
 
 router.get(
   "/hold-orders",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.getAllHoldOrders,
 );
 
 router.get(
   "/no-response",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.getAllNoResponseOrders,
 );
 
@@ -111,42 +111,42 @@ router.patch("/:id", OrderControllers.updateOrder);
 
 router.patch(
   "/:id/no-response",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.markNoResponse,
 );
 
 router.patch(
   "/:id/restore-no-response",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.MODERATOR, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.MODERATOR, Role.TELESALES),
   OrderControllers.restoreNoResponseOrder,
 );
 
 router.patch(
   "/manual-delivery-status/:id",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.updateManualDeliveryStatus,
 );
 
 router.patch(
   "/:id/assign-seller",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.assignSeller,
 );
 
 router.patch(
   "/:id/confirm-status",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.updateOrderStatus,
 );
 
 router.patch(
   "/:id/status",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.updateCompleteOrder,
 );
 router.patch(
   "/:id/cancel-status",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   OrderControllers.updateOrderCancelStatus,
 );
 

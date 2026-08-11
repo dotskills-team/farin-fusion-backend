@@ -13,7 +13,7 @@ const router = express.Router();
 
 router.post(
   "/create",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   validateRequest(createCourierZodSchema),
   CourierControllers.createCourier,
 );
@@ -32,7 +32,7 @@ router.get(
 
 router.get(
   "/",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS, Role.MODERATOR),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES, Role.MODERATOR),
   CourierControllers.getAllCouriers,
 );
 

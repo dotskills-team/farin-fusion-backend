@@ -80,7 +80,7 @@ const getDashboardOverview = async (
   const salaryAgg = await User.aggregate([
     {
       $match: {
-        role: { $in: ["ADMIN", "MANAGER", "MODERATOR", "TELLICELSS"] },
+        role: { $in: ["ADMIN", "MANAGER", "MODERATOR", "TELESALES"] },
         isDeleted: false,
       },
     },
@@ -191,7 +191,7 @@ const getDashboardOverview = async (
   const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
 
   const staffUsers = await User.find({
-    role: { $in: ["ADMIN", "MANAGER", "MODERATOR", "TELLICELSS"] },
+    role: { $in: ["ADMIN", "MANAGER", "MODERATOR", "TELESALES"] },
     isDeleted: false,
   });
 
@@ -452,7 +452,7 @@ const getDashboardOverview = async (
   }
 
   if (
-    [Role.MODERATOR, Role.GENERALSTAFF, Role.TELLICELSS].includes(role as Role)
+    [Role.MODERATOR, Role.GENERALSTAFF, Role.TELESALES].includes(role as Role)
   ) {
     const result = await Order.aggregate([
       {
