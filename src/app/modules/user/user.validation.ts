@@ -49,12 +49,12 @@ export const createUserZodSchema = z.object({
         Role.CUSTOMER,
         Role.MANAGER,
         Role.MODERATOR,
-        Role.TELLICELSS,
+        Role.TELESALES,
         Role.GENERALSTAFF,
       ],
       {
         invalid_type_error:
-          "Role must be either ADMIN, CUSTOMER, MANAGER, TELLICELSS, GENERAL STAFF or MODERATOR",
+          "Role must be either ADMIN, CUSTOMER, MANAGER, TELESALES, GENERAL STAFF or MODERATOR",
       },
     )
     .optional(),
@@ -81,12 +81,12 @@ export const updateUserZodSchema = z.object({
         Role.CUSTOMER,
         Role.MANAGER,
         Role.MODERATOR,
-        Role.TELLICELSS,
+        Role.TELESALES,
         Role.GENERALSTAFF,
       ],
       {
         invalid_type_error:
-          "Role must be either ADMIN, CUSTOMER, MANAGER, TELLICELSS, GENERAL STAFF or MODERATOR",
+          "Role must be either ADMIN, CUSTOMER, MANAGER, TELESALES, GENERAL STAFF or MODERATOR",
       },
     )
     .optional(),

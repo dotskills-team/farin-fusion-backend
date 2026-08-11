@@ -23,7 +23,7 @@ router.patch(
 );
 router.get(
   "/all-users",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   UserControllers.getAllUsers,
 );
 router.get(
@@ -33,19 +33,19 @@ router.get(
 );
 router.get(
   "/all-customers",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   UserControllers.getAllCustomers,
 );
 
 router.get(
   "/my-customers",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.MODERATOR, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.MODERATOR, Role.TELESALES),
   UserControllers.getMyCustomers,
 );
 
 router.get(
   "/all-trash-customers",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   UserControllers.getAllTrashCustomers,
 );
 router.get(
@@ -69,7 +69,7 @@ router.post(
 );
 router.post(
   "/customer-trash/:id",
-  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELLICELSS),
+  checkAuth(Role.ADMIN, Role.MANAGER, Role.TELESALES),
   UserControllers.updateCustomerTrash,
 );
 
