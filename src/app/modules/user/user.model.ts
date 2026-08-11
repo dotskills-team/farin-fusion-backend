@@ -17,6 +17,7 @@ const userSchema = new Schema<IUser>(
         "dashboard",
         "my-orders",
         "analytics",
+        "product-stock-adjustment",
         "user-management",
         "returns",
         "reviews-management",
